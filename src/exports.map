@@ -1,0 +1,10 @@
+/* Only the loader entry points leave the library; everything else, including
+   the statically linked libstdc++, stays local. */
+{
+    global:
+        vkNegotiateLoaderLayerInterfaceVersion;
+        vkGetInstanceProcAddr;
+        vkGetDeviceProcAddr;
+    local:
+        *;
+};

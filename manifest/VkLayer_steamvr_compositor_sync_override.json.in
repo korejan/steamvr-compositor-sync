@@ -1,0 +1,19 @@
+{
+    "file_format_version": "1.2.0",
+    "layer": {
+        "name": "VK_LAYER_LUNARG_override",
+        "type": "GLOBAL",
+        "api_version": "@api_version@",
+        "implementation_version": "1",
+        "description": "Loads @layer_name@ into vrcompositor only.",
+        "component_layers": [
+            "@layer_name@"
+        ],
+        "app_keys": [
+            @app_keys@
+        ],
+        "disable_environment": {
+            "STEAMVR_COMPOSITOR_SYNC_DISABLE": "1"
+        }
+    }
+}

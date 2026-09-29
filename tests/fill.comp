@@ -1,0 +1,10 @@
+#version 450
+// Reads the descriptor set, so validation tracks the set as in use by the
+// submission (binding alone is not enough).
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) buffer Data {
+    uint values[];
+};
+void main() {
+    values[gl_GlobalInvocationID.x] = 0x5a5a5a5au;
+}

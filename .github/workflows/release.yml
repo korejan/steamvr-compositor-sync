@@ -1,0 +1,165 @@
+# Builds the prebuilt layer in the Steam Runtime 3 (sniper) SDK and publishes it
+# as a GitHub release. The version is project(VERSION) in CMakeLists.txt, plus
+# an optional pre-release label; the release is tagged v<version>.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Pre-release label (e.g. rc.1); empty for a final release
+        type: string
+        default: ""
+      sdk:
+        description: Steam Runtime 3 (sniper) SDK image tag
+        type: string
+        default: latest
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Release from the default branch only
+        if: github.ref_name != github.event.repository.default_branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          echo "::error::releases are made from $DEFAULT_BRANCH, not $GITHUB_REF_NAME"
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Determine the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ inputs.label }}
+          SDK: ${{ inputs.sdk }}
+        run: |
+          base=$(sed -n '/^project(/,/)/s/^ *VERSION \([0-9]\+\.[0-9]\+\.[0-9]\+\)$/\1/p' CMakeLists.txt)
+          if [[ -z "$base" ]]; then
+            echo "::error::no project(VERSION x.y.z) in CMakeLists.txt"
+            exit 1
+          fi
+          if [[ -n "$LABEL" && ! "$LABEL" =~ ^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$ ]]; then
+            echo "::error::invalid pre-release label: $LABEL"
+            exit 1
+          fi
+          if [[ ! "$SDK" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::invalid SDK image tag: $SDK"
+            exit 1
+          fi
+          version="$base${LABEL:+-$LABEL}"
+
+          # Tags are immutable releases: an existing one means the version was not bumped.
+          error="$RUNNER_TEMP/tag-check.txt"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version" --silent 2>"$error"; then
+            echo "::error::v$version is already released; bump project(VERSION) or use another label"
+            exit 1
+          elif ! grep -q 'HTTP 404' "$error"; then
+            echo "::error::could not check for tag v$version: $(cat "$error")"
+            exit 1
+          fi
+
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "tag=v$version" >>"$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:${{ inputs.sdk }}
+    permissions:
+      contents: read
+    outputs:
+      archive: ${{ steps.package.outputs.archive }}
+      glibc: ${{ steps.package.outputs.glibc }}
+      sdk: ${{ steps.package.outputs.sdk }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build and package
+        id: package
+        env:
+          CC: gcc-14
+          CXX: g++-14
+          LABEL: ${{ inputs.label }}
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          # The checkout belongs to another user inside the container.
+          git config --global --add safe.directory "$PWD"
+          scripts/package.sh --label "$LABEL" --output dist
+          built=$(sed -n 's/^version=//p' "$GITHUB_OUTPUT")
+          if [[ "$built" != "$EXPECTED_VERSION" ]]; then
+            echo "::error::built $built, expected $EXPECTED_VERSION"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: dist
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/${{ needs.build.outputs.archive }}
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          LABEL: ${{ inputs.label }}
+          SDK: ${{ needs.build.outputs.sdk }}
+          GLIBC: ${{ needs.build.outputs.glibc }}
+        run: |
+          notes=$(printf '%s\n' \
+            "Prebuilt for x86_64 Linux with glibc $GLIBC or newer, in the Steam Runtime 3 (sniper) SDK $SDK." \
+            "" \
+            "Install: extract the archive, run \`./install.sh\`, restart SteamVR (\`./install.sh --uninstall\` removes it)." \
+            "Verify the download with \`sha256sum -c <archive>.sha256\` or \`gh attestation verify <archive> --repo $GH_REPO\`.")
+          prerelease=()
+          if [[ -n "$LABEL" ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes "$notes" \
+            --generate-notes \
+            "${prerelease[@]}"

@@ -1,0 +1,6 @@
+# The style of the Khronos Vulkan projects (Vulkan-Loader, Vulkan-ValidationLayers).
+BasedOnStyle: Google
+IndentWidth: 4
+AccessModifierOffset: -2
+ColumnLimit: 132
+SortIncludes: false

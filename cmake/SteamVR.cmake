@@ -1,0 +1,53 @@
+# Locating SteamVR's vrcompositor for the override manifest's app_keys.
+
+function(steamvr_compositor_sync_user_dir out variable fallback)
+    if(DEFINED ENV{${variable}} AND NOT "$ENV{${variable}}" STREQUAL "")
+        set(${out} "$ENV{${variable}}" PARENT_SCOPE)
+    else()
+        set(${out} "$ENV{HOME}/${fallback}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+# Sets <out> to the vrcompositor executables of the SteamVR runtimes that
+# SteamVR registered in openvrpaths.vrpath, resolved the way the loader
+# resolves the running executable. Falls back to the default Steam library.
+function(steamvr_compositor_sync_find_vrcompositor out)
+    steamvr_compositor_sync_user_dir(config XDG_CONFIG_HOME .config)
+    steamvr_compositor_sync_user_dir(data XDG_DATA_HOME .local/share)
+    set(runtimes "")
+    set(registry "${config}/openvr/openvrpaths.vrpath")
+    if(EXISTS "${registry}")
+        file(READ "${registry}" json)
+        string(JSON count ERROR_VARIABLE error LENGTH "${json}" runtime)
+        if(NOT error AND count GREATER 0)
+            math(EXPR last "${count} - 1")
+            foreach(i RANGE ${last})
+                string(JSON runtime GET "${json}" runtime ${i})
+                list(APPEND runtimes "${runtime}")
+            endforeach()
+        endif()
+    endif()
+    list(APPEND runtimes "${data}/Steam/steamapps/common/SteamVR")
+
+    set(found "")
+    foreach(runtime IN LISTS runtimes)
+        if(EXISTS "${runtime}/bin/linux64/vrcompositor")
+            file(REAL_PATH "${runtime}/bin/linux64/vrcompositor" path)
+            list(APPEND found "${path}")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES found)
+    set(${out} "${found}" PARENT_SCOPE)
+endfunction()
+
+# Sets <out> to the paths as the contents of a JSON string array.
+function(steamvr_compositor_sync_json_strings out)
+    set(items "")
+    foreach(item IN LISTS ARGN)
+        string(REPLACE "\\" "\\\\" item "${item}")
+        string(REPLACE "\"" "\\\"" item "${item}")
+        list(APPEND items "\"${item}\"")
+    endforeach()
+    list(JOIN items ", " joined)
+    set(${out} "${joined}" PARENT_SCOPE)
+endfunction()
