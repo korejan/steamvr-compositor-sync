@@ -1,0 +1,11 @@
+{
+    "file_format_version": "1.1.2",
+    "layer": {
+        "name": "@layer_name@",
+        "type": "GLOBAL",
+        "library_path": "@library_path@",
+        "api_version": "@api_version@",
+        "implementation_version": "1",
+        "description": "Stops SteamVR's vrcompositor from recycling command buffers and descriptor pools the GPU is still using (SteamVR-for-Linux#952). Inert in any process but vrcompositor."
+    }
+}
